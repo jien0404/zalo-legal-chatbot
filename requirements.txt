@@ -1,13 +1,24 @@
+# Web Frameworks
 fastapi
 uvicorn[standard]
 streamlit
-sentence-transformers
-pinecone-client
-rank_bm25
-pyvi
-openai
-python-dotenv
+
+# Core ML/AI Libraries
+sentence-transformers==2.7.0
+rank_bm25==0.2.2
+pyvi==0.1.1
+google-generativeai
+python-dotenv==1.0.1
+pinecone-client==3.2.2
+pytrec-eval==0.5
+
+# PyTorch with CUDA support (cho NVIDIA GPU)
+--extra-index-url https://download.pytorch.org/whl/cu121
 torch
+torchvision
+torchaudio
+
+# Utilities
 numpy
 pandas
 tqdm

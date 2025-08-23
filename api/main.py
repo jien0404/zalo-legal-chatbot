@@ -2,8 +2,10 @@
 import os
 from fastapi import FastAPI, Depends
 from pydantic import BaseModel
-from openai import OpenAI
 from dotenv import load_dotenv
+
+# === THAY ĐỔI 1: Import thư viện Gemini ===
+import google.generativeai as genai
 
 from .dependencies import get_retriever
 from retriever.retrieval_system import RetrievalSystem
@@ -15,10 +17,14 @@ app = FastAPI(
     description="API for a Retrieval-Augmented Generation system on legal documents"
 )
 
-# Khởi tạo OpenAI client
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# === THAY ĐỔI 2: Cấu hình API Key cho Gemini ===
+try:
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+except Exception as e:
+    print(f"Lỗi cấu hình Gemini API: {e}")
 
-# Pydantic models để validate request và response
+
+# Pydantic models (giữ nguyên)
 class QueryRequest(BaseModel):
     question: str
     top_k_rerank: int = 5
@@ -27,8 +33,8 @@ class AnswerResponse(BaseModel):
     answer: str
     sources: list[dict]
 
+# Hàm format_prompt (giữ nguyên)
 def format_prompt(question: str, context_chunks: list[dict]) -> str:
-    """Tạo prompt cho LLM."""
     context = ""
     for i, chunk in enumerate(context_chunks):
         context += f"Nguồn {i+1} (từ văn bản {chunk['doc_id']}):\n\"\"\"\n{chunk['text']}\n\"\"\"\n\n"
@@ -45,34 +51,30 @@ Câu trả lời của bạn:
 
 @app.post("/generate_answer", response_model=AnswerResponse)
 def generate_answer(request: QueryRequest, retriever: RetrievalSystem = Depends(get_retriever)):
-    """
-    Endpoint chính: Nhận câu hỏi, retrieve context, và sinh câu trả lời.
-    """
-    # 1. Retrieve relevant chunks
     retrieved_chunks = retriever.retrieve_chunks(request.question, top_k_rerank=request.top_k_rerank)
 
     if not retrieved_chunks:
         return AnswerResponse(answer="Không tìm thấy tài liệu liên quan.", sources=[])
 
-    # 2. Tạo prompt và gọi LLM
     prompt = format_prompt(request.question, retrieved_chunks)
     
+    # === THAY ĐỔI 3: Gọi API Gemini thay vì OpenAI ===
     try:
-        completion = client.chat.completions.create(
-            model="gpt-3.5-turbo", # Hoặc "gpt-4"
-            messages=[
-                {"role": "system", "content": "Bạn là một trợ lý pháp lý hữu ích."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.1
-        )
-        answer = completion.choices[0].message.content
-    except Exception as e:
-        return AnswerResponse(answer=f"Lỗi khi gọi LLM: {e}", sources=retrieved_chunks)
+        # 1. Khởi tạo model
+        model = genai.GenerativeModel('gemini-1.5-flash-latest') # Hoặc 'gemini-pro'
+        
+        # 2. Sinh câu trả lời
+        response = model.generate_content(prompt)
+        
+        # 3. Lấy text từ response
+        answer = response.text
 
-    # 3. Trả về câu trả lời và nguồn
+    except Exception as e:
+        return AnswerResponse(answer=f"Lỗi khi gọi Gemini API: {e}", sources=retrieved_chunks)
+    # === KẾT THÚC THAY ĐỔI ===
+
     return AnswerResponse(answer=answer, sources=retrieved_chunks)
 
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to the Zalo Legal RAG API"}
+    return {"message": "Welcome to the Zalo Legal RAG API (Gemini Edition)"}

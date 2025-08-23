@@ -19,6 +19,5 @@ pip-cache/
 *.swo
 
 # Data files (nếu chúng lớn và không nên commit)
-data/processed_data/
-data/raw_data/
+data/
 models/

@@ -3,6 +3,7 @@
 import os
 import json
 import torch
+import numpy as np
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from rank_bm25 import BM25Okapi
 from pinecone import Pinecone

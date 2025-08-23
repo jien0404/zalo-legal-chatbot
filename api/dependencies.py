@@ -3,9 +3,9 @@ from retriever.retrieval_system import RetrievalSystem
 import os
 
 # Đường dẫn có thể được load từ file config
-PROCESSED_DATA_DIR = "data/processed_data" # Đường dẫn tương đối từ gốc dự án
+PROCESSED_DATA_DIR = "data/processed_data_chunks" 
 EMBEDDING_MODEL_PATH = "models/finetuned-e5-base"
-RERANKER_MODEL_PATH = "models/finetuned-reranker-large"
+RERANKER_MODEL_PATH = "models/finetuned-reranker-base"
 
 # Singleton pattern: Khởi tạo model một lần và tái sử dụng
 retriever = RetrievalSystem(
