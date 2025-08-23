@@ -76,11 +76,11 @@ Trả lời:"""
 
 @app.post("/generate_answer", response_model=AnswerResponse)
 def generate_answer(request: QueryRequest, retriever: RetrievalSystem = Depends(get_retriever)):
-    if not is_legal_question(request.question):
-        return AnswerResponse(
-            answer="Tôi là trợ lý pháp lý và chỉ có thể trả lời các câu hỏi liên quan đến pháp luật.",
-            sources=[]
-        )
+    # if not is_legal_question(request.question):
+    #     return AnswerResponse(
+    #         answer="Tôi là trợ lý pháp lý và chỉ có thể trả lời các câu hỏi liên quan đến pháp luật.",
+    #         sources=[]
+    #     )
     
     retrieved_chunks = retriever.retrieve_chunks(request.question, top_k_rerank=request.top_k_rerank)
 

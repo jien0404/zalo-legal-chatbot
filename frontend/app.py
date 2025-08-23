@@ -1,44 +1,65 @@
 # frontend/app.py
 import streamlit as st
-import requests
-import json
 
-# Cấu hình trang
-st.set_page_config(page_title="Hỏi Đáp Pháp Luật", layout="wide")
+from utils.state import initialize_session_state
+from services.api_client import get_answer_from_api
+from components.sidebar import render_sidebar
+from components.chat_elements import display_chat_message
+from style import inject_custom_css
 
-st.title("Hệ Thống Hỏi Đáp Thông Minh Về Pháp Luật Việt Nam")
-st.markdown("Hệ thống này sử dụng Trí tuệ nhân tạo để tìm kiếm và tổng hợp thông tin từ kho dữ liệu văn bản pháp luật.")
+# --- Cấu hình trang và UI ---
+st.set_page_config(
+    page_title="Hỏi Đáp Pháp Luật", 
+    layout="wide", 
+    initial_sidebar_state="expanded"
+)
+inject_custom_css()
+render_sidebar()
+st.header("⚖️ Trò chuyện cùng Trợ lý Pháp luật")
+st.caption("Được hỗ trợ bởi các mô hình AI tiên tiến")
 
-# URL của Backend API
-API_URL = "http://127.0.0.1:8000/generate_answer"
+# --- Khởi tạo trạng thái session ---
+initialize_session_state()
 
-# Giao diện
-question = st.text_input("Vui lòng nhập câu hỏi của bạn:", "")
+# --- Hiển thị lịch sử chat ---
+# Vòng lặp này sẽ vẽ lại toàn bộ cuộc trò chuyện mỗi khi có thay đổi
+for message in st.session_state.messages:
+    display_chat_message(message)
 
-if st.button("Tìm kiếm"):
-    if question:
-        with st.spinner("Đang xử lý, vui lòng chờ..."):
-            try:
-                # Gửi yêu cầu đến backend
-                response = requests.post(API_URL, json={"question": question, "top_k_rerank": 5})
-                response.raise_for_status()  # Ném lỗi nếu request không thành công
-                
-                result = response.json()
-                answer = result.get("answer")
-                sources = result.get("sources")
+# 1. Xử lý input của người dùng và thêm vào state ngay lập tức
+if prompt := st.chat_input("Nhập câu hỏi của bạn ở đây..."):
+    user_message = {"role": "user", "content": prompt}
+    st.session_state.messages.append(user_message)
+    # Ngay sau khi thêm, chạy lại script để tin nhắn của người dùng
+    # được hiển thị ngay lập tức mà không cần chờ bot.
+    st.rerun()
 
-                # Hiển thị kết quả
-                st.subheader("Câu trả lời tổng hợp:")
-                st.markdown(answer)
-                
-                st.subheader("Các nguồn tài liệu tham khảo:")
-                for i, source in enumerate(sources):
-                    with st.expander(f"Nguồn {i+1}: Văn bản {source['doc_id']} (Điểm liên quan: {source['score']:.4f})"):
-                        st.text(source['text'])
-                        
-            except requests.exceptions.RequestException as e:
-                st.error(f"Lỗi kết nối đến server: {e}")
-            except Exception as e:
-                st.error(f"Đã có lỗi xảy ra: {e}")
-    else:
-        st.warning("Vui lòng nhập câu hỏi.")
+# 2. Kiểm tra xem bot có cần trả lời hay không
+# Logic này sẽ chạy sau khi st.rerun() ở trên được thực thi
+# Nó kiểm tra xem tin nhắn cuối cùng có phải của người dùng không
+if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+    last_user_prompt = st.session_state.messages[-1]["content"]
+    
+    # Hiển thị spinner và gọi API
+    with st.chat_message("assistant", avatar="🤖"):
+        with st.spinner("Bot đang suy nghĩ..."):
+            api_response = get_answer_from_api(last_user_prompt)
+            
+            if "error" in api_response:
+                bot_response_content = api_response["error"]
+                bot_response_sources = None
+            else:
+                bot_response_content = api_response.get("answer", "Xin lỗi, đã có lỗi xảy ra.")
+                bot_response_sources = api_response.get("sources")
+
+            # Tạo tin nhắn đầy đủ của bot
+            bot_message = {
+                "role": "assistant",
+                "content": bot_response_content,
+                "sources": bot_response_sources
+            }
+            # Thêm tin nhắn của bot vào lịch sử
+            st.session_state.messages.append(bot_message)
+            
+            # Chạy lại script một lần nữa để vẽ tin nhắn của bot lên màn hình
+            st.rerun()
