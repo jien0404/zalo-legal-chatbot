@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+streamlit
+sentence-transformers
+pinecone-client
+rank_bm25
+pyvi
+openai
+python-dotenv
+torch
+numpy
+pandas
+tqdm
