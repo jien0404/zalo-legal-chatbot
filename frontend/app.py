@@ -35,24 +35,20 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
     
     with st.chat_message("assistant", avatar="🤖"):
         placeholder = st.empty()
+        placeholder.markdown("🤔 Bot đang suy nghĩ...")
         
-        # === THAY ĐỔI 1: Hiển thị trạng thái "đang suy nghĩ" ban đầu ===
-        thinking_message = "🤔 Bot đang suy nghĩ..."
-        placeholder.markdown(thinking_message)
-        
-        full_response = ""
+        full_response_content = ""
         sources = None
         
-        # Lấy stream từ API
         stream = get_answer_stream_from_api(st.session_state.messages)
         
-        # === THAY ĐỔI 2: Xử lý chunk đầu tiên một cách đặc biệt ===
+        # Biến để đảm bảo thông báo "suy nghĩ" bị xóa ở chunk đầu tiên
         is_first_chunk = True
         
         for chunk in stream:
             if "error" in chunk:
-                full_response = chunk["error"]
-                placeholder.error(full_response)
+                full_response_content = chunk["error"]
+                placeholder.error(full_response_content)
                 break
             
             if "sources" in chunk:
@@ -62,25 +58,25 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
             if "text" in chunk:
                 # Nếu là chunk đầu tiên, xóa thông báo "đang suy nghĩ"
                 if is_first_chunk:
-                    full_response = chunk["text"]
+                    placeholder.empty()
                     is_first_chunk = False
-                else:
-                    full_response += chunk["text"]
-                
-                # Cập nhật placeholder với hiệu ứng typing mượt mà hơn
-                placeholder.markdown(full_response + "▌")
+
+                # === THAY ĐỔI CỐT LÕI NẰM Ở ĐÂY ===
+                # Lặp qua từng ký tự trong chunk text nhận được
+                for char in chunk["text"]:
+                    full_response_content += char
+                    placeholder.markdown(full_response_content + "▌")
+                    time.sleep(0.01) # Tốc độ gõ chữ, có thể điều chỉnh
         
         # Cập nhật lần cuối không có con trỏ
-        placeholder.markdown(full_response)
+        placeholder.markdown(full_response_content)
 
         # Lưu tin nhắn hoàn chỉnh vào session state
         bot_message = {
             "role": "assistant",
-            "content": full_response,
+            "content": full_response_content,
             "sources": sources
         }
-        # Chỉ thêm vào nếu nó chưa tồn tại (tránh trùng lặp khi rerun)
         if st.session_state.messages[-1] != bot_message:
             st.session_state.messages.append(bot_message)
-            # Chạy lại lần cuối để ổn định giao diện và hiển thị sources đúng cách
             st.rerun()
