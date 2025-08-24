@@ -1,6 +1,6 @@
 # frontend/components/sidebar.py
 import streamlit as st
-from services.api_client import get_conversations_from_api
+from services.api_client import get_conversations_from_api, delete_conversation_on_api
 
 def render_sidebar(authenticator, username): # Nhận thêm username
     with st.sidebar:
@@ -21,10 +21,24 @@ def render_sidebar(authenticator, username): # Nhận thêm username
         
         conversations = get_conversations_from_api(username) 
         for convo in conversations:
-            if st.button(convo['title'], key=convo['id'], use_container_width=True):
-                # Khi click vào, lưu ID và đánh dấu cần tải lại
-                st.session_state.conversation_id = convo['id']
-                st.session_state.load_conversation = True # Dùng cờ để tải
+            # Tạo hai cột: một cho tên, một cho nút xóa
+            col1, col2 = st.columns([4, 1])
+            
+            with col1:
+                # Nút chọn cuộc trò chuyện (chiếm phần lớn không gian)
+                if st.button(convo['title'], key=f"select_{convo['id']}", use_container_width=True):
+                    st.session_state.conversation_id = convo['id']
+                    st.session_state.load_conversation = True
+                    st.rerun()
 
-        st.markdown("---")
-        st.info("...")
+            with col2:
+                # Nút xóa (chiếm phần nhỏ)
+                if st.button("🗑️", key=f"delete_{convo['id']}", help="Xóa cuộc trò chuyện này"):
+                    delete_conversation_on_api(username, convo['id'])
+                    # Nếu đang xem cuộc trò chuyện bị xóa, hãy reset lại
+                    if st.session_state.get("conversation_id") == convo['id']:
+                        st.session_state.conversation_id = None
+                        st.session_state.messages = [
+                            {"role": "assistant", "content": "Xin chào! Tôi có thể giúp gì cho bạn?"}
+                        ]
+                    st.rerun()

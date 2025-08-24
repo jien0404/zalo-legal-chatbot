@@ -45,16 +45,32 @@ if authentication_status is True:
 
     # Xử lý input
     if prompt := st.chat_input("Nhập câu hỏi của bạn ở đây..."):
+        # Luôn thêm tin nhắn của người dùng vào session state trước tiên
         user_message = {"role": "user", "content": prompt}
-        
-        # === THÊM MỚI: Tạo cuộc trò chuyện mới nếu cần ===
-        if "conversation_id" not in st.session_state or st.session_state.conversation_id is None:
-            # Dùng 5 từ đầu của prompt làm tiêu đề
-            title = " ".join(prompt.split()[:5]) + "..."
-            new_convo_id = create_conversation_on_api(username, title)
-            st.session_state.conversation_id = new_convo_id
-        
         st.session_state.messages.append(user_message)
+
+        # Biến cờ để kiểm tra xem có cần rerun để cập nhật sidebar không
+        needs_sidebar_refresh = False
+
+        # Kiểm tra xem đây có phải là tin nhắn đầu tiên của một cuộc trò chuyện mới không
+        if "conversation_id" not in st.session_state or st.session_state.conversation_id is None:
+            title = " ".join(prompt.split()[:5]) + "..."
+            response = create_conversation_on_api(username, title)
+            
+            # Chỉ cập nhật và đánh dấu cần refresh nếu API gọi thành công
+            if response and "conversation_id" in response:
+                st.session_state.conversation_id = response["conversation_id"]
+                needs_sidebar_refresh = True
+            else:
+                # Xử lý lỗi nếu không tạo được cuộc trò chuyện
+                # Chúng ta sẽ xóa tin nhắn vừa thêm vào để tránh gây lỗi
+                st.session_state.messages.pop() 
+                st.error("Không thể tạo cuộc trò chuyện mới. Vui lòng thử lại.")
+                # Dừng ở đây để người dùng thấy lỗi
+                st.stop() 
+                
+        # Chạy lại ứng dụng. Nếu là cuộc trò chuyện mới, sidebar sẽ được cập nhật.
+        # Nếu là cuộc trò chuyện cũ, chỉ có tin nhắn của người dùng được hiển thị.
         st.rerun()
 
     # --- Logic stream đã được cải tiến ---

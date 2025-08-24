@@ -107,6 +107,46 @@ def add_message(conversation_id: str, role: str, content: str, sources: list | N
     conn.commit()
     conn.close()
 
+def delete_conversation(conversation_id: str, user_id: int):
+    """
+    Xóa một cuộc trò chuyện và tất cả các tin nhắn liên quan.
+    Chỉ người sở hữu mới có thể xóa.
+    """
+    # === SỬA ĐỔI HOÀN TOÀN LOGIC NÀY ===
+    delete_messages_sql = 'DELETE FROM messages WHERE conversation_id = ?'
+    delete_conversation_sql = 'DELETE FROM conversations WHERE id = ? AND user_id = ?'
+
+    conn = get_db_connection()
+    try:
+        # Sử dụng with conn để tự động quản lý transaction
+        with conn:
+            # Bật khóa ngoại để khi xóa conversation, message cũng được xử lý (nếu có cascade)
+            # Dù chúng ta xóa thủ công, bật nó lên là một thực hành tốt
+            conn.execute("PRAGMA foreign_keys = ON;")
+            
+            # Xóa các tin nhắn trước
+            conn.execute(delete_messages_sql, (conversation_id,))
+            
+            # Sau đó xóa chính cuộc trò chuyện, đồng thời xác thực user_id
+            # cursor.rowcount sẽ trả về số hàng đã bị ảnh hưởng (xóa)
+            cursor = conn.execute(delete_conversation_sql, (conversation_id, user_id))
+            
+            # Nếu có 1 hàng bị xóa, nghĩa là xóa thành công và user là chủ sở hữu
+            if cursor.rowcount > 0:
+                return True
+            else:
+                # Không có hàng nào bị xóa, nghĩa là user không phải chủ sở hữu
+                # hoặc conversation_id không tồn tại.
+                return False
+                
+    except sqlite3.Error as e:
+        print(f"Lỗi database khi xóa: {e}")
+        return False
+    finally:
+        # Đảm bảo kết nối luôn được đóng
+        if conn:
+            conn.close()
+
 if __name__ == "__main__":
     init_db()
     print("Cơ sở dữ liệu đã được khởi tạo.")
