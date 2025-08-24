@@ -26,39 +26,51 @@ except Exception as e:
     print(f"Lỗi cấu hình Gemini API: {e}")
 
 
-# Pydantic models (giữ nguyên)
+# === SỬA ĐỔI: Pydantic models để nhận lịch sử chat ===
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
 class QueryRequest(BaseModel):
-    question: str
+    # Thêm trường chat_history
+    chat_history: list[ChatMessage]
+    # Câu hỏi mới nhất sẽ là tin nhắn cuối cùng trong history
     top_k_rerank: int = 5
 
 class AnswerResponse(BaseModel):
     answer: str
     sources: list[dict]
 
-# Hàm format_prompt (giữ nguyên)
-def format_prompt(question: str, context_chunks: list[dict]) -> str:
-    """Tạo prompt cho LLM với chỉ thị rõ ràng."""
-    context = ""
-    for i, chunk in enumerate(context_chunks):
-        # Chỉ lấy 250 từ đầu của mỗi chunk để prompt gọn hơn
-        shortened_text = " ".join(chunk['text'].split()[:250])
-        context += f"Nguồn {i+1} (từ văn bản {chunk['doc_id']}):\n\"\"\"\n{shortened_text}...\n\"\"\"\n\n"
+def format_prompt(chat_history: list[ChatMessage]) -> str:
+    """Tạo prompt cho LLM từ toàn bộ lịch sử chat."""
     
-    prompt = f"""Bạn là một trợ lý chuyên về pháp luật Việt Nam. Nhiệm vụ của bạn là trả lời câu hỏi của người dùng DỰA VÀ CHỈ DỰA VÀO các nguồn thông tin được cung cấp dưới đây.
+    # Lấy câu hỏi mới nhất của người dùng
+    current_question = chat_history[-1].content
+    
+    # Xây dựng context từ các tin nhắn trước đó (trừ câu hỏi hiện tại)
+    history_context = ""
+    # Chỉ lấy 10 tin nhắn gần nhất để tránh vượt token limit
+    for message in chat_history[-11:-1]: 
+        role = "Người dùng" if message.role == "user" else "Trợ lý"
+        history_context += f"{role}: {message.content}\n"
+    
+    prompt = f"""Bạn là một trợ lý chuyên về pháp luật Việt Nam. Dựa vào lịch sử cuộc trò chuyện và các nguồn thông tin được cung cấp để trả lời câu hỏi MỚI NHẤT của người dùng.
 
-**Quy tắc bắt buộc:**
-1.  Đọc kỹ câu hỏi và tất cả các nguồn.
-2.  **Trước tiên, hãy tự xác định xem các nguồn này có chứa đủ thông tin để trả lời câu hỏi không.**
-3.  **Nếu các nguồn KHÔNG chứa thông tin liên quan để trả lời, HÃY TRẢ LỜI CHÍNH XÁC LÀ:** "Tôi không tìm thấy thông tin để trả lời câu hỏi này trong các tài liệu được cung cấp."
-4.  Nếu thông tin có trong các nguồn, hãy tổng hợp lại và trả lời một cách súc tích, chuyên nghiệp. Trích dẫn nguồn tin liên quan nhất bằng cách ghi `[Nguồn X]` ở cuối câu trả lời.
+**Lịch sử cuộc trò chuyện gần đây:**
+---
+{history_context}---
 
-**Thông tin các nguồn:**
-{context}
-**Câu hỏi của người dùng:** {question}
+**Câu hỏi MỚI NHẤT của người dùng:** {current_question}
 
-**Câu trả lời của bạn:**
+**Nhiệm vụ:**
+1.  Hiểu câu hỏi MỚI NHẤT trong ngữ cảnh của cuộc trò chuyện.
+2.  Dựa vào các NGUỒN THÔNG TIN TÌM KIẾM được (sẽ được thêm vào sau) để trả lời.
+3.  Nếu lịch sử hoặc các nguồn không đủ thông tin, hãy nói bạn không biết.
+
+Đây là các nguồn thông tin tìm kiếm được liên quan đến câu hỏi mới nhất:
 """
     return prompt
+
 
 def is_legal_question(question: str) -> bool:
     """Sử dụng LLM để phân loại câu hỏi."""
@@ -76,13 +88,15 @@ Trả lời:"""
 
 @app.post("/generate_answer", response_model=AnswerResponse)
 def generate_answer(request: QueryRequest, retriever: RetrievalSystem = Depends(get_retriever)):
-    # if not is_legal_question(request.question):
+    current_question = request.chat_history[-1].content
+
+    # if not is_legal_question(current_question): 
     #     return AnswerResponse(
     #         answer="Tôi là trợ lý pháp lý và chỉ có thể trả lời các câu hỏi liên quan đến pháp luật.",
     #         sources=[]
     #     )
     
-    retrieved_chunks = retriever.retrieve_chunks(request.question, top_k_rerank=request.top_k_rerank)
+    retrieved_chunks = retriever.retrieve_chunks(current_question, top_k_rerank=request.top_k_rerank)
 
     if not retrieved_chunks:
         return AnswerResponse(answer="Không tìm thấy tài liệu liên quan.", sources=[])
@@ -93,23 +107,20 @@ def generate_answer(request: QueryRequest, retriever: RetrievalSystem = Depends(
             answer="Tôi xin lỗi, tôi không tìm thấy thông tin đủ liên quan trong cơ sở dữ liệu để trả lời câu hỏi này.",
             sources=retrieved_chunks 
         )
+    
+    source_context = ""
+    for i, chunk in enumerate(retrieved_chunks):
+        source_context += f"Nguồn {i+1} (từ văn bản {chunk['doc_id']}):\n\"\"\"\n{chunk['text']}\n\"\"\"\n\n"
 
-    prompt = format_prompt(request.question, retrieved_chunks)
+    final_prompt = format_prompt(request.chat_history) + source_context
     
     # === THAY ĐỔI 3: Gọi API Gemini thay vì OpenAI ===
     try:
-        # 1. Khởi tạo model
-        model = genai.GenerativeModel('gemini-1.5-flash-latest') # Hoặc 'gemini-pro'
-        
-        # 2. Sinh câu trả lời
-        response = model.generate_content(prompt)
-        
-        # 3. Lấy text từ response
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        response = model.generate_content(final_prompt)
         answer = response.text
-
     except Exception as e:
         return AnswerResponse(answer=f"Lỗi khi gọi Gemini API: {e}", sources=retrieved_chunks)
-    # === KẾT THÚC THAY ĐỔI ===
 
     return AnswerResponse(answer=answer, sources=retrieved_chunks)
 

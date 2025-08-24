@@ -43,7 +43,7 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
     # Hiển thị spinner và gọi API
     with st.chat_message("assistant", avatar="🤖"):
         with st.spinner("Bot đang suy nghĩ..."):
-            api_response = get_answer_from_api(last_user_prompt)
+            api_response = get_answer_from_api(st.session_state.messages)
             
             if "error" in api_response:
                 bot_response_content = api_response["error"]

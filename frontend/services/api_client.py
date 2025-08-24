@@ -2,16 +2,21 @@
 import streamlit as st
 import requests
 
-# Lấy URL của API từ secrets hoặc đặt cứng để test local
-API_URL = st.secrets.get("API_URL", "http://127.0.0.1:8000/generate_answer")
+API_URL = "http://127.0.0.1:8000/generate_answer"
 
-@st.cache_data(show_spinner=False) # Cache để tránh gọi lại API không cần thiết
-def get_answer_from_api(question: str):
-    """Gửi câu hỏi đến backend và nhận câu trả lời."""
+# === SỬA ĐỔI: Hàm này giờ nhận toàn bộ lịch sử chat ===
+@st.cache_data(show_spinner=False)
+def get_answer_from_api(chat_history: list[dict]):
+    """Gửi toàn bộ lịch sử chat đến backend."""
+    
+    # Chỉ gửi content và role, không gửi sources
+    history_to_send = [{"role": msg["role"], "content": msg["content"]} for msg in chat_history]
+    
     try:
         response = requests.post(
             API_URL, 
-            json={"question": question, "top_k_rerank": 5}
+            # Dữ liệu gửi đi giờ là một object chứa chat_history
+            json={"chat_history": history_to_send, "top_k_rerank": 5}
         )
         response.raise_for_status()
         return response.json()
