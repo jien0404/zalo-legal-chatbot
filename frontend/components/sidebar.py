@@ -1,20 +1,22 @@
 # frontend/components/sidebar.py
 import streamlit as st
 
-def render_sidebar():
+# Sửa hàm để nhận vào authenticator
+def render_sidebar(authenticator):
     """Hiển thị sidebar và các chức năng của nó."""
     with st.sidebar:
-        # === THAY ĐỔI: Thêm icon và cấu trúc lại ===
         st.markdown("## ⚖️ Zalo Legal Bot")
-        st.markdown("Trợ lý Hỏi-Đáp Pháp luật thông minh")
+        st.markdown("Trợ lý Hỏi-Đáp Pháp luật")
         st.markdown("---")
-
+        
+        # Thêm nút Logout từ authenticator
+        authenticator.logout(key='unique_key', location='main')
+        
+        st.markdown("---")
+        
         if st.button("➕ Cuộc trò chuyện mới", use_container_width=True):
             st.session_state.messages = [
-                {
-                    "role": "assistant",
-                    "content": "Xin chào! Tôi có thể giúp gì mới cho bạn?"
-                }
+                {"role": "assistant", "content": "Xin chào! Tôi có thể giúp gì mới cho bạn?"}
             ]
             st.rerun()
 
