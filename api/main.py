@@ -1,14 +1,28 @@
 # api/main.py
+import sys
+import os
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(PROJECT_ROOT)
+
 import os
 import json
 from fastapi import FastAPI, Depends
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import google.generativeai as genai
+from core.database import (
+    get_user_id,
+    get_user_conversations,
+    get_conversation_messages,
+    add_conversation,
+    get_db_connection,
+    add_message 
+)
 
 from .dependencies import get_retriever
 from retriever.retrieval_system import RetrievalSystem
+
 
 load_dotenv()
 
@@ -27,7 +41,14 @@ class ChatMessage(BaseModel):
 
 class QueryRequest(BaseModel):
     chat_history: list[ChatMessage]
+    # Thêm 2 trường này
+    conversation_id: str | None # Có thể là None cho cuộc trò chuyện mới
+    username: str
     top_k_rerank: int = 5
+
+class RegisterRequest(BaseModel):
+    username: str
+    hashed_password: str
 
 # --- Các hàm Helper (giữ nguyên) ---
 def rewrite_query_with_history(chat_history: list[ChatMessage]) -> str:
@@ -122,6 +143,28 @@ def stream_response_generator(request: QueryRequest, retriever: RetrievalSystem)
         error_message = f"Lỗi khi gọi Gemini API: {e}"
         yield f"data: {json.dumps({'text': error_message})}\n\n"
 
+    # Lấy câu hỏi cuối cùng của người dùng
+    user_message = request.chat_history[-1].content
+    
+    # Stream câu trả lời của bot
+    full_bot_response = ""
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        stream = model.generate_content(final_prompt, stream=True)
+        
+        for chunk in stream:
+            if chunk.text:
+                full_bot_response += chunk.text
+                yield f"data: {json.dumps({'text': chunk.text})}\n\n"
+        
+        # Sau khi stream xong, lưu cả hai tin nhắn vào DB
+        add_message(request.conversation_id, "user", user_message)
+        add_message(request.conversation_id, "assistant", full_bot_response, sources_data)
+
+    except Exception as e:
+        error_message = f"Lỗi khi gọi Gemini API: {e}"
+        yield f"data: {json.dumps({'text': error_message})}\n\n"
+
 @app.post("/generate_answer") # Bỏ response_model vì chúng ta đang stream
 def generate_answer(request: QueryRequest, retriever: RetrievalSystem = Depends(get_retriever)):
     return StreamingResponse(
@@ -132,3 +175,52 @@ def generate_answer(request: QueryRequest, retriever: RetrievalSystem = Depends(
 @app.get("/")
 def read_root():
     return {"message": "Welcome to the Zalo Legal RAG API"}
+
+@app.get("/conversations/{username}")
+def get_conversations(username: str):
+    """Lấy danh sách các cuộc trò chuyện của người dùng."""
+    user_id = get_user_id(username)
+    if not user_id:
+        return []
+    conversations = get_user_conversations(user_id)
+    # Chuyển đổi từ sqlite3.Row sang list of dicts để tương thích JSON
+    return [{"id": convo["id"], "title": convo["title"]} for convo in conversations]
+
+@app.get("/messages/{conversation_id}")
+def get_messages(conversation_id: str):
+    """Lấy các tin nhắn của một cuộc trò chuyện."""
+    return get_conversation_messages(conversation_id)
+
+class NewConversationRequest(BaseModel):
+    username: str
+    title: str
+
+@app.post("/conversations")
+def create_conversation(request: NewConversationRequest):
+    """Tạo một cuộc trò chuyện mới."""
+    user_id = get_user_id(request.username)
+    if not user_id:
+        return JSONResponse(status_code=404, content={"error": "User not found"})
+    
+    try:
+        new_convo_id = add_conversation(user_id, request.title)
+        # === SỬA ĐỔI Ở ĐÂY: Trả về JSONResponse ===
+        return JSONResponse(status_code=200, content={"conversation_id": new_convo_id})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.post("/register")
+def register_user(request: RegisterRequest):
+    """Thêm một người dùng mới vào database."""
+    try:
+        conn = get_db_connection()
+        conn.execute(
+            "INSERT INTO users (username, hashed_password) VALUES (?, ?)",
+            (request.username, request.hashed_password)
+        )
+        conn.commit()
+        conn.close()
+        return {"message": "User registered successfully in DB"}
+    except Exception as e:
+        # Xử lý trường hợp username đã tồn tại
+        return {"error": str(e)}, 500

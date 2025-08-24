@@ -3,42 +3,57 @@ import streamlit as st
 import time
 
 from utils.state import initialize_session_state
-from services.api_client import get_answer_stream_from_api
+from services.api_client import get_answer_stream_from_api, get_messages_from_api, create_conversation_on_api, register_user_on_api
 from components.sidebar import render_sidebar
 from components.chat_elements import display_chat_message
 from style import inject_custom_css
-from auth_manager import initialize_authenticator
+from auth_manager import initialize_authenticator, update_config
 
 # --- Cấu hình trang và UI ---
 st.set_page_config(
-    page_title="Hỏi Đáp Pháp Luật", 
-    layout="wide", 
-    initial_sidebar_state="expanded"
+    page_title="Hỏi Đáp Pháp Luật",
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 inject_custom_css()
 
 # --- XÁC THỰC NGƯỜI DÙNG ---
-authenticator = initialize_authenticator()
-name, authentication_status, username = authenticator.login(fields={'Form name': 'Login', 'Location': 'main'})
+authenticator, config = initialize_authenticator()
+name = st.session_state.get("name")
+authentication_status = st.session_state.get("authentication_status")
+username = st.session_state.get("username")
 
-# --- LUỒNG XỬ LÝ DỰA TRÊN TRẠNG THÁI XÁC THỰC ---
-if authentication_status is False:
-    st.error('Tên người dùng/mật khẩu không chính xác')
-elif authentication_status is None:
-    st.warning('Vui lòng nhập tên người dùng và mật khẩu của bạn')
-elif authentication_status is True:
-    render_sidebar(authenticator)
-    st.header("⚖️ Trò chuyện cùng Trợ lý Pháp luật")
-    st.caption("Được hỗ trợ bởi các mô hình AI tiên tiến")
+# Tạo placeholder để hiển thị form đăng nhập/đăng ký
+login_placeholder = st.empty()
 
-    # --- Khởi tạo và hiển thị lịch sử ---
+if authentication_status is True:
+    # Người dùng đã đăng nhập: xóa hoàn toàn phần login
+    login_placeholder.empty()
+    # Hiển thị giao diện chính
+    render_sidebar(authenticator, username)
+    st.header(f"⚖️ Chào mừng, *{name}*!")
+    # st.caption("...") 
     initialize_session_state()
+
+    if st.session_state.get("load_conversation"):
+        convo_id = st.session_state.conversation_id
+        st.session_state.messages = get_messages_from_api(convo_id)
+        st.session_state.load_conversation = False # Reset cờ
+
     for message in st.session_state.messages:
         display_chat_message(message)
 
-    # --- Xử lý input ---
+    # Xử lý input
     if prompt := st.chat_input("Nhập câu hỏi của bạn ở đây..."):
         user_message = {"role": "user", "content": prompt}
+        
+        # === THÊM MỚI: Tạo cuộc trò chuyện mới nếu cần ===
+        if "conversation_id" not in st.session_state or st.session_state.conversation_id is None:
+            # Dùng 5 từ đầu của prompt làm tiêu đề
+            title = " ".join(prompt.split()[:5]) + "..."
+            new_convo_id = create_conversation_on_api(username, title)
+            st.session_state.conversation_id = new_convo_id
+        
         st.session_state.messages.append(user_message)
         st.rerun()
 
@@ -52,7 +67,11 @@ elif authentication_status is True:
             full_response_content = ""
             sources = None
             
-            stream = get_answer_stream_from_api(st.session_state.messages)
+            stream = get_answer_stream_from_api(
+                st.session_state.messages,
+                username,
+                st.session_state.conversation_id
+            )
             
             # Biến để đảm bảo thông báo "suy nghĩ" bị xóa ở chunk đầu tiên
             is_first_chunk = True
@@ -92,3 +111,30 @@ elif authentication_status is True:
             if st.session_state.messages[-1] != bot_message:
                 st.session_state.messages.append(bot_message)
                 st.rerun()
+
+else:
+    # Chưa đăng nhập hoặc đăng nhập thất bại
+    with login_placeholder.container():
+        login_tab, register_tab = st.tabs(["Đăng nhập", "Đăng ký"])
+        with login_tab:
+            name, authentication_status, username = authenticator.login(fields={'Form name': 'Login'})
+            # Nếu đăng nhập thành công thì rerun để chuyển sang UI chính
+            if authentication_status:
+                st.rerun()
+        with register_tab:
+            st.info("Mật khẩu phải có ít nhất 8 ký tự.")
+            try:
+                if authenticator.register_user(fields={'Form name': 'Đăng ký tài khoản', 'preauthorization': False}):
+                    update_config(config)
+                    new_username = list(config['credentials']['usernames'].keys())[-1]
+                    new_user_details = config['credentials']['usernames'][new_username]
+                    register_user_on_api(new_username, new_user_details['password'])
+                    st.success('Bạn đã đăng ký thành công. Vui lòng chuyển qua tab "Đăng nhập".')
+            except Exception as e:
+                st.error(e)
+
+    # Nếu nhập sai thông tin
+    if authentication_status is False:
+        st.error('Tên người dùng/mật khẩu không chính xác')
+    elif authentication_status is None:
+        st.warning('Vui lòng nhập tên người dùng và mật khẩu của bạn')

@@ -4,15 +4,18 @@ import streamlit_authenticator as stauth
 import yaml
 from yaml.loader import SafeLoader
 
+def update_config(config):
+    """Ghi lại file config.yaml với thông tin người dùng mới."""
+    with open('./config.yaml', 'w', encoding='utf-8') as file:
+        yaml.dump(config, file, default_flow_style=False, allow_unicode=True)
+
 def initialize_authenticator():
-    """
-    Tải cấu hình từ file YAML và khởi tạo đối tượng authenticator.
-    """
     try:
         with open('./config.yaml', 'r', encoding='utf-8') as file:
             config = yaml.load(file, Loader=SafeLoader)
+            
     except FileNotFoundError:
-        st.error("Lỗi: Không tìm thấy file 'config.yaml'. Vui lòng tạo file này.")
+        st.error("Lỗi: Không tìm thấy file 'config.yaml'.")
         st.stop()
 
     authenticator = stauth.Authenticate(
@@ -22,4 +25,5 @@ def initialize_authenticator():
         config['cookie']['expiry_days'],
         config['preauthorized']
     )
-    return authenticator
+    # Trả về cả config để có thể cập nhật
+    return authenticator, config

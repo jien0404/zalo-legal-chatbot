@@ -2,7 +2,7 @@
 fastapi
 uvicorn[standard]
 streamlit
-streamlit-authenticator
+streamlit-authenticator==0.3.2
 
 # Core ML/AI Libraries
 sentence-transformers==2.7.0

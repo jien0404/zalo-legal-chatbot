@@ -1,27 +1,30 @@
 # frontend/components/sidebar.py
 import streamlit as st
+from services.api_client import get_conversations_from_api
 
-# Sửa hàm để nhận vào authenticator
-def render_sidebar(authenticator):
-    """Hiển thị sidebar và các chức năng của nó."""
+def render_sidebar(authenticator, username): # Nhận thêm username
     with st.sidebar:
-        st.markdown("## ⚖️ Zalo Legal Bot")
-        st.markdown("Trợ lý Hỏi-Đáp Pháp luật")
+        st.markdown(f"#### Chào, *{username}*")
+        authenticator.logout()
         st.markdown("---")
-        
-        # Thêm nút Logout từ authenticator
-        authenticator.logout(key='unique_key', location='main')
-        
-        st.markdown("---")
-        
+
         if st.button("➕ Cuộc trò chuyện mới", use_container_width=True):
+            # Khi tạo chat mới, xóa ID cuộc trò chuyện hiện tại
+            st.session_state.conversation_id = None 
             st.session_state.messages = [
                 {"role": "assistant", "content": "Xin chào! Tôi có thể giúp gì mới cho bạn?"}
             ]
             st.rerun()
 
         st.markdown("---")
-        st.info(
-            "**Lưu ý:** Hệ thống này được xây dựng cho mục đích thử nghiệm."
-            " Mọi thông tin chỉ mang tính chất tham khảo."
-        )
+        st.markdown("#### Lịch sử trò chuyện")
+        
+        conversations = get_conversations_from_api(username) 
+        for convo in conversations:
+            if st.button(convo['title'], key=convo['id'], use_container_width=True):
+                # Khi click vào, lưu ID và đánh dấu cần tải lại
+                st.session_state.conversation_id = convo['id']
+                st.session_state.load_conversation = True # Dùng cờ để tải
+
+        st.markdown("---")
+        st.info("...")
