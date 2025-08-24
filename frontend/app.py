@@ -1,8 +1,9 @@
 # frontend/app.py
 import streamlit as st
+import time
 
 from utils.state import initialize_session_state
-from services.api_client import get_answer_from_api
+from services.api_client import get_answer_stream_from_api
 from components.sidebar import render_sidebar
 from components.chat_elements import display_chat_message
 from style import inject_custom_css
@@ -18,48 +19,68 @@ render_sidebar()
 st.header("⚖️ Trò chuyện cùng Trợ lý Pháp luật")
 st.caption("Được hỗ trợ bởi các mô hình AI tiên tiến")
 
-# --- Khởi tạo trạng thái session ---
+# --- Khởi tạo và hiển thị lịch sử ---
 initialize_session_state()
-
-# --- Hiển thị lịch sử chat ---
-# Vòng lặp này sẽ vẽ lại toàn bộ cuộc trò chuyện mỗi khi có thay đổi
 for message in st.session_state.messages:
     display_chat_message(message)
 
-# 1. Xử lý input của người dùng và thêm vào state ngay lập tức
+# --- Xử lý input ---
 if prompt := st.chat_input("Nhập câu hỏi của bạn ở đây..."):
     user_message = {"role": "user", "content": prompt}
     st.session_state.messages.append(user_message)
-    # Ngay sau khi thêm, chạy lại script để tin nhắn của người dùng
-    # được hiển thị ngay lập tức mà không cần chờ bot.
     st.rerun()
 
-# 2. Kiểm tra xem bot có cần trả lời hay không
-# Logic này sẽ chạy sau khi st.rerun() ở trên được thực thi
-# Nó kiểm tra xem tin nhắn cuối cùng có phải của người dùng không
+# --- Logic stream đã được cải tiến ---
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-    last_user_prompt = st.session_state.messages[-1]["content"]
     
-    # Hiển thị spinner và gọi API
     with st.chat_message("assistant", avatar="🤖"):
-        with st.spinner("Bot đang suy nghĩ..."):
-            api_response = get_answer_from_api(st.session_state.messages)
+        placeholder = st.empty()
+        
+        # === THAY ĐỔI 1: Hiển thị trạng thái "đang suy nghĩ" ban đầu ===
+        thinking_message = "🤔 Bot đang suy nghĩ..."
+        placeholder.markdown(thinking_message)
+        
+        full_response = ""
+        sources = None
+        
+        # Lấy stream từ API
+        stream = get_answer_stream_from_api(st.session_state.messages)
+        
+        # === THAY ĐỔI 2: Xử lý chunk đầu tiên một cách đặc biệt ===
+        is_first_chunk = True
+        
+        for chunk in stream:
+            if "error" in chunk:
+                full_response = chunk["error"]
+                placeholder.error(full_response)
+                break
             
-            if "error" in api_response:
-                bot_response_content = api_response["error"]
-                bot_response_sources = None
-            else:
-                bot_response_content = api_response.get("answer", "Xin lỗi, đã có lỗi xảy ra.")
-                bot_response_sources = api_response.get("sources")
+            if "sources" in chunk:
+                sources = chunk["sources"]
+                continue
+            
+            if "text" in chunk:
+                # Nếu là chunk đầu tiên, xóa thông báo "đang suy nghĩ"
+                if is_first_chunk:
+                    full_response = chunk["text"]
+                    is_first_chunk = False
+                else:
+                    full_response += chunk["text"]
+                
+                # Cập nhật placeholder với hiệu ứng typing mượt mà hơn
+                placeholder.markdown(full_response + "▌")
+        
+        # Cập nhật lần cuối không có con trỏ
+        placeholder.markdown(full_response)
 
-            # Tạo tin nhắn đầy đủ của bot
-            bot_message = {
-                "role": "assistant",
-                "content": bot_response_content,
-                "sources": bot_response_sources
-            }
-            # Thêm tin nhắn của bot vào lịch sử
+        # Lưu tin nhắn hoàn chỉnh vào session state
+        bot_message = {
+            "role": "assistant",
+            "content": full_response,
+            "sources": sources
+        }
+        # Chỉ thêm vào nếu nó chưa tồn tại (tránh trùng lặp khi rerun)
+        if st.session_state.messages[-1] != bot_message:
             st.session_state.messages.append(bot_message)
-            
-            # Chạy lại script một lần nữa để vẽ tin nhắn của bot lên màn hình
+            # Chạy lại lần cuối để ổn định giao diện và hiển thị sources đúng cách
             st.rerun()
