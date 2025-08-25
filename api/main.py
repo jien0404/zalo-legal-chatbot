@@ -42,6 +42,7 @@ class QueryRequest(BaseModel):
     conversation_id: str | None
     username: str
     top_k_rerank: int = 5
+    is_first_message: bool = False
 
 class RegisterRequest(BaseModel):
     username: str
@@ -75,47 +76,57 @@ def pre_filter_intent(query: str) -> str | None:
     return None
 
 
-def get_structured_input_analysis(query: str) -> dict:
+def get_structured_input_analysis(query: str, is_first_message: bool) -> dict:
     """
-    Một lệnh gọi LLM duy nhất để sửa chính tả và phân loại ý định.
-    Trả về một dictionary có cấu trúc.
+    Một lệnh gọi LLM duy nhất để sửa chính tả, phân loại ý định,
+    VÀ TẠO TIÊU ĐỀ cho tin nhắn đầu tiên.
     """
     try:
         model = genai.GenerativeModel('gemini-1.5-flash-latest')
-        
-        prompt = f"""Bạn là một bộ xử lý ngôn ngữ đầu vào thông minh. Nhiệm vụ của bạn là nhận một câu từ người dùng và trả về một đối tượng JSON duy nhất chứa 3 thông tin:
+
+        # Thêm hướng dẫn tạo tiêu đề vào prompt
+        title_instruction = ""
+        if is_first_message:
+            title_instruction = """4. `conversation_title`: Dựa vào `corrected_query`, tạo một tiêu đề ngắn gọn (3-5 từ) cho cuộc trò chuyện. Nếu ý định không phải là "Legal Question", trả về null."""
+
+        prompt = f"""Bạn là một bộ xử lý ngôn ngữ đầu vào thông minh. Nhiệm vụ của bạn là nhận một câu từ người dùng và trả về một đối tượng JSON duy nhất chứa các thông tin sau:
 1.  `corrected_query`: Câu đã được sửa lỗi chính tả và ngữ pháp.
 2.  `intent`: Ý định của câu, thuộc một trong các loại: "Legal Question", "Greeting", "Farewell", "Help Request", "Other".
 3.  `is_rag_required`: Một giá trị boolean (true/false) cho biết câu này có cần tra cứu trong cơ sở dữ liệu pháp luật hay không.
+{title_instruction}
 
 Ví dụ:
 - Câu gốc: "luât lao đông quy đinh ntn vè tăng ca"
-- JSON trả về: {{"corrected_query": "Luật lao động quy định như thế nào về tăng ca?", "intent": "Legal Question", "is_rag_required": true}}
+- JSON trả về (cho tin nhắn đầu tiên): {{"corrected_query": "Luật lao động quy định như thế nào về tăng ca?", "intent": "Legal Question", "is_rag_required": true, "conversation_title": "Quy định về tăng ca"}}
 - Câu gốc: "chao ban"
-- JSON trả về: {{"corrected_query": "Chào bạn.", "intent": "Greeting", "is_rag_required": false}}
-- Câu gốc: "bạn làm dc gì"
-- JSON trả về: {{"corrected_query": "Bạn làm được gì?", "intent": "Help Request", "is_rag_required": false}}
-- Câu gốc: "cảm ơn nhé"
-- JSON trả về: {{"corrected_query": "Cảm ơn nhé.", "intent": "Other", "is_rag_required": false}}
+- JSON trả về (cho tin nhắn đầu tiên): {{"corrected_query": "Chào bạn.", "intent": "Greeting", "is_rag_required": false, "conversation_title": null}}
 
 ---
 Bây giờ, hãy xử lý câu sau đây. Chỉ trả về đối tượng JSON.
 Câu gốc: "{query}"
 """
-        
+
         response = model.generate_content(prompt)
-        # Làm sạch và parse JSON từ text trả về
         json_text = response.text.strip().replace("```json", "").replace("```", "")
-        return json.loads(json_text)
+        analysis = json.loads(json_text)
+        
+        # Đảm bảo trường title luôn tồn tại, kể cả khi LLM quên
+        if is_first_message and 'conversation_title' not in analysis:
+            analysis['conversation_title'] = None
+            
+        return analysis
 
     except Exception as e:
         logging.error(f"Lỗi khi phân tích có cấu trúc: {e}")
-        # Nếu có lỗi, mặc định là câu hỏi pháp luật và không sửa chính tả
-        return {
+        # Mặc định an toàn
+        default_response = {
             "corrected_query": query,
             "intent": "Legal Question",
             "is_rag_required": True
         }
+        if is_first_message:
+            default_response['conversation_title'] = query[:30] + "..." # Tiêu đề tạm
+        return default_response
 
 def rewrite_query_with_history(chat_history: list[ChatMessage]) -> str:
     if len(chat_history) < 2:
@@ -150,25 +161,46 @@ def stream_response_generator(request: QueryRequest, retriever: RetrievalSystem)
                 "Help Request": "Tôi có thể trả lời các câu hỏi liên quan đến dữ liệu pháp luật được cung cấp. Bạn hãy đặt một câu hỏi cụ thể về một vấn đề pháp lý nhé."
             }
             response_text = intent_responses.get(fast_intent)
-            add_message(conn, request.conversation_id, "user", user_message_content)
-            add_message(conn, request.conversation_id, "assistant", response_text)
             yield f"data: {json.dumps({'text': response_text})}\n\n"
             return
 
         # === LỚP 2: LỆNH GỌI LLM THÔNG MINH ===
-        analysis = get_structured_input_analysis(user_message_content)
+        is_new_conversation_thread = request.conversation_id is None
+        analysis = get_structured_input_analysis(user_message_content, is_new_conversation_thread)
         corrected_query = analysis['corrected_query']
-        is_rag_required = analysis['is_rag_required']
 
         # Cập nhật chat history với câu đã sửa
         request.chat_history[-1].content = corrected_query
         if corrected_query != user_message_content:
             logging.info(f"Sửa chính tả: '{user_message_content}' -> '{corrected_query}'")
         
-        add_message(conn, request.conversation_id, "user", corrected_query)
+        # === LOGIC "KHAI SINH" CUỘC TRÒ CHUYỆN MỚI ===
+        if is_new_conversation_thread and analysis.get("conversation_title"):
+            # Thời điểm để tạo và lưu trữ!
+            title = analysis["conversation_title"]
+            logging.info(f"Tạo cuộc trò chuyện mới với tiêu đề: '{title}'")
+            
+            # 1. Tạo cuộc trò chuyện trong DB
+            user_id = get_user_id(conn, request.username)
+            if not user_id: 
+                # Xử lý trường hợp user không tồn tại, mặc dù hiếm
+                raise Exception(f"User {request.username} không tìm thấy khi đang tạo convo.")
+            created_convo_id = add_conversation(conn, user_id, title)
+
+            # 2. Lưu TOÀN BỘ lịch sử chat "lơ lửng" vào DB
+            for message in request.chat_history:
+                add_message(conn, created_convo_id, message.role, message.content)
+            
+            # 3. Gửi thông tin về cho frontend để cập nhật state
+            yield f"data: {json.dumps({'new_conversation': {'id': created_convo_id, 'title': title}})}\n\n"
+
+            request.conversation_id = created_convo_id
+
+        elif not is_new_conversation_thread:
+            add_message(conn, request.conversation_id, "user", corrected_query)
 
         # === ĐỊNH TUYẾN DỰA TRÊN KẾT QUẢ PHÂN TÍCH ===
-        if not is_rag_required:
+        if not analysis['is_rag_required']:
             # Xử lý các trường hợp small-talk khác mà bộ lọc nhanh bỏ lỡ
             intent = analysis['intent']
             response_text = "Cảm ơn bạn đã chia sẻ." # Câu trả lời mặc định
@@ -179,7 +211,8 @@ def stream_response_generator(request: QueryRequest, retriever: RetrievalSystem)
             elif intent == "Help Request":
                  response_text = "Hãy đặt câu hỏi về pháp luật và tôi sẽ cố gắng trả lời dựa trên dữ liệu của mình."
 
-            add_message(conn, request.conversation_id, "assistant", response_text)
+            if request.conversation_id:
+                add_message(conn, request.conversation_id, "assistant", response_text)
             yield f"data: {json.dumps({'text': response_text})}\n\n"
             return
         
