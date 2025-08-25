@@ -79,33 +79,42 @@ def pre_filter_intent(query: str) -> str | None:
 def get_structured_input_analysis(query: str, is_first_message: bool) -> dict:
     """
     Một lệnh gọi LLM duy nhất để sửa chính tả, phân loại ý định,
-    VÀ TẠO TIÊU ĐỀ cho tin nhắn đầu tiên.
+    VÀ TẠO TIÊU ĐỀ cho tin nhắn đầu tiên. (Đã tối ưu cho Zalo Legal Dataset)
     """
     try:
         model = genai.GenerativeModel('gemini-1.5-flash-latest')
-
-        # Thêm hướng dẫn tạo tiêu đề vào prompt
+        
         title_instruction = ""
         if is_first_message:
             title_instruction = """4. `conversation_title`: Dựa vào `corrected_query`, tạo một tiêu đề ngắn gọn (3-5 từ) cho cuộc trò chuyện. Nếu ý định không phải là "Legal Question", trả về null."""
 
-        prompt = f"""Bạn là một bộ xử lý ngôn ngữ đầu vào thông minh. Nhiệm vụ của bạn là nhận một câu từ người dùng và trả về một đối tượng JSON duy nhất chứa các thông tin sau:
+        # === PROMPT MỚI ĐÃ ĐƯỢC TỐI ƯU HÓA ===
+        prompt = f"""Bạn là một bộ xử lý ngôn ngữ đầu vào thông minh cho một trợ lý chuyên về pháp luật Việt Nam. 
+Cơ sở dữ liệu của trợ lý này chứa các điều khoản, luật, và nghị định của Việt Nam.
+
+Nhiệm vụ của bạn là phân tích câu hỏi của người dùng và trả về một đối tượng JSON duy nhất để quyết định xem câu hỏi đó có thể được trả lời bằng cách tra cứu trong cơ sở dữ liệu pháp luật hay không.
+
+JSON trả về phải có các trường sau:
 1.  `corrected_query`: Câu đã được sửa lỗi chính tả và ngữ pháp.
-2.  `intent`: Ý định của câu, thuộc một trong các loại: "Legal Question", "Greeting", "Farewell", "Help Request", "Other".
-3.  `is_rag_required`: Một giá trị boolean (true/false) cho biết câu này có cần tra cứu trong cơ sở dữ liệu pháp luật hay không.
+2.  `intent`: Phân loại ý định của câu. Quan trọng nhất là "Legal Question".
+    - "Legal Question": Bất kỳ câu hỏi nào, dù là hỏi trực tiếp hay mô tả một tình huống, mà câu trả lời có thể nằm trong một văn bản pháp luật.
+    - Các loại khác: "Greeting", "Farewell", "Help Request", "Other".
+3.  `is_rag_required`: Luôn là `true` nếu intent là "Legal Question", ngược lại là `false`.
 {title_instruction}
 
 Ví dụ:
-- Câu gốc: "luât lao đông quy đinh ntn vè tăng ca"
-- JSON trả về (cho tin nhắn đầu tiên): {{"corrected_query": "Luật lao động quy định như thế nào về tăng ca?", "intent": "Legal Question", "is_rag_required": true, "conversation_title": "Quy định về tăng ca"}}
+- Câu gốc: "Công ty nợ lương 2 tháng thì phải làm sao?"
+- JSON trả về: {{"corrected_query": "Công ty nợ lương 2 tháng thì phải làm sao?", "intent": "Legal Question", "is_rag_required": true, "conversation_title": "Xử lý nợ lương"}}
+- Câu gốc: "được nghỉ bao nhiêu ngày phép 1 năm"
+- JSON trả về: {{"corrected_query": "Được nghỉ bao nhiêu ngày phép 1 năm?", "intent": "Legal Question", "is_rag_required": true, "conversation_title": "Quy định ngày phép"}}
 - Câu gốc: "chao ban"
-- JSON trả về (cho tin nhắn đầu tiên): {{"corrected_query": "Chào bạn.", "intent": "Greeting", "is_rag_required": false, "conversation_title": null}}
+- JSON trả về: {{"corrected_query": "Chào bạn.", "intent": "Greeting", "is_rag_required": false, "conversation_title": null}}
 
 ---
 Bây giờ, hãy xử lý câu sau đây. Chỉ trả về đối tượng JSON.
 Câu gốc: "{query}"
 """
-
+        
         response = model.generate_content(prompt)
         json_text = response.text.strip().replace("```json", "").replace("```", "")
         analysis = json.loads(json_text)
