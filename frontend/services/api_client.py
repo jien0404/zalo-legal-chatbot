@@ -88,3 +88,17 @@ def delete_conversation_on_api(username: str, conversation_id: str):
     except Exception as e:
         st.error(f"Lỗi khi xóa cuộc trò chuyện: {e}")
         return None
+    
+def update_conversation_title_on_api(username: str, conversation_id: str, new_title: str):
+    """Gọi API để cập nhật tiêu đề cuộc trò chuyện."""
+    try:
+        response = requests.post(
+            f"{BASE_API_URL}/conversations/update_title",
+            json={"username": username, "conversation_id": conversation_id, "new_title": new_title}
+        )
+        response.raise_for_status()
+        # Không cần trả về gì nếu thành công, raise_for_status sẽ xử lý lỗi
+        return True
+    except requests.exceptions.RequestException as e:
+        st.error(f"Lỗi khi cập nhật tiêu đề: {e}")
+        return False

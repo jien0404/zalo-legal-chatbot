@@ -15,7 +15,7 @@ import google.generativeai as genai
 from core.database import (
     get_user_id, get_user_conversations, get_conversation_messages,
     add_conversation, add_message, delete_conversation, register_user_in_db,
-    get_db_connection, get_db
+    get_db_connection, get_db, update_conversation_title
 )
 from retriever.retrieval_system import RetrievalSystem
 from api.dependencies import get_retriever
@@ -55,6 +55,11 @@ class NewConversationRequest(BaseModel):
 class DeleteConversationRequest(BaseModel):
     username: str
     conversation_id: str
+
+class UpdateTitleRequest(BaseModel):
+    username: str
+    conversation_id: str
+    new_title: str
 
 # --- Helper Functions ---
 GREETING_KEYWORDS = ["chào", "hello", "hi", "xin chào"]
@@ -326,4 +331,23 @@ def delete_conversation_endpoint(request: DeleteConversationRequest, conn: sqlit
     if success:
         return JSONResponse(status_code=200, content={"message": "Conversation deleted successfully"})
     else:
+        return JSONResponse(status_code=403, content={"error": "Forbidden or conversation not found"})
+    
+@app.post("/conversations/update_title")
+def update_title_endpoint(request: UpdateTitleRequest, conn: sqlite3.Connection = Depends(get_db)):
+    """Cập nhật tiêu đề của một cuộc trò chuyện."""
+    user_id = get_user_id(conn, request.username)
+    if not user_id:
+        return JSONResponse(status_code=404, content={"error": "User not found"})
+    
+    # Giới hạn độ dài tiêu đề để tránh dữ liệu quá lớn
+    if len(request.new_title) > 100:
+        return JSONResponse(status_code=400, content={"error": "Title is too long"})
+
+    success = update_conversation_title(conn, request.conversation_id, user_id, request.new_title)
+    
+    if success:
+        return JSONResponse(status_code=200, content={"message": "Title updated successfully"})
+    else:
+        # Lỗi có thể do conversation_id không tồn tại hoặc không thuộc về user này
         return JSONResponse(status_code=403, content={"error": "Forbidden or conversation not found"})

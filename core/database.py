@@ -125,3 +125,21 @@ def register_user_in_db(conn: sqlite3.Connection, username: str, hashed_password
         (username, hashed_password)
     )
     conn.commit()
+
+def update_conversation_title(conn: sqlite3.Connection, conversation_id: str, user_id: int, new_title: str) -> bool:
+    """
+    Cập nhật tiêu đề của một cuộc trò chuyện.
+    Trả về True nếu thành công, False nếu không.
+    """
+    try:
+        # Câu lệnh UPDATE có điều kiện WHERE user_id để đảm bảo an toàn
+        cursor = conn.execute(
+            'UPDATE conversations SET title = ? WHERE id = ? AND user_id = ?',
+            (new_title, conversation_id, user_id)
+        )
+        conn.commit()
+        # cursor.rowcount sẽ > 0 nếu có một dòng được cập nhật thành công
+        return cursor.rowcount > 0
+    except sqlite3.Error as e:
+        print(f"Lỗi database khi cập nhật tiêu đề: {e}")
+        return False
