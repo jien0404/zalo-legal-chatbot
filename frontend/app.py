@@ -78,7 +78,7 @@ if authentication_status is True:
         
         with st.chat_message("assistant", avatar="🤖"):
             placeholder = st.empty()
-            placeholder.markdown("🤔 Bot đang suy nghĩ...")
+            placeholder.markdown("🤔 Hãy đợi một chút trong khi tôi suy nhĩ nhé!")
             
             full_response_content = ""
             sources = None

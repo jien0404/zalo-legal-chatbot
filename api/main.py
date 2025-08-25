@@ -56,6 +56,67 @@ class DeleteConversationRequest(BaseModel):
     conversation_id: str
 
 # --- Helper Functions ---
+GREETING_KEYWORDS = ["chào", "hello", "hi", "xin chào"]
+FAREWELL_KEYWORDS = ["tạm biệt", "bye", "bai bai"]
+HELP_KEYWORDS = ["giúp", "cứu", "bạn làm được gì", "chức năng"]
+
+def pre_filter_intent(query: str) -> str | None:
+    """Bộ lọc siêu nhanh dựa trên từ khóa, chạy trước cả LLM."""
+    lower_query = query.lower().strip()
+    
+    # Kiểm tra xem câu có BẮT ĐẦU bằng từ khóa không
+    if any(lower_query.startswith(key) for key in GREETING_KEYWORDS):
+        return "Greeting"
+    if any(lower_query.startswith(key) for key in FAREWELL_KEYWORDS):
+        return "Farewell"
+    if any(lower_query.startswith(key) for key in HELP_KEYWORDS):
+        return "Help Request"
+        
+    return None
+
+
+def get_structured_input_analysis(query: str) -> dict:
+    """
+    Một lệnh gọi LLM duy nhất để sửa chính tả và phân loại ý định.
+    Trả về một dictionary có cấu trúc.
+    """
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        
+        prompt = f"""Bạn là một bộ xử lý ngôn ngữ đầu vào thông minh. Nhiệm vụ của bạn là nhận một câu từ người dùng và trả về một đối tượng JSON duy nhất chứa 3 thông tin:
+1.  `corrected_query`: Câu đã được sửa lỗi chính tả và ngữ pháp.
+2.  `intent`: Ý định của câu, thuộc một trong các loại: "Legal Question", "Greeting", "Farewell", "Help Request", "Other".
+3.  `is_rag_required`: Một giá trị boolean (true/false) cho biết câu này có cần tra cứu trong cơ sở dữ liệu pháp luật hay không.
+
+Ví dụ:
+- Câu gốc: "luât lao đông quy đinh ntn vè tăng ca"
+- JSON trả về: {{"corrected_query": "Luật lao động quy định như thế nào về tăng ca?", "intent": "Legal Question", "is_rag_required": true}}
+- Câu gốc: "chao ban"
+- JSON trả về: {{"corrected_query": "Chào bạn.", "intent": "Greeting", "is_rag_required": false}}
+- Câu gốc: "bạn làm dc gì"
+- JSON trả về: {{"corrected_query": "Bạn làm được gì?", "intent": "Help Request", "is_rag_required": false}}
+- Câu gốc: "cảm ơn nhé"
+- JSON trả về: {{"corrected_query": "Cảm ơn nhé.", "intent": "Other", "is_rag_required": false}}
+
+---
+Bây giờ, hãy xử lý câu sau đây. Chỉ trả về đối tượng JSON.
+Câu gốc: "{query}"
+"""
+        
+        response = model.generate_content(prompt)
+        # Làm sạch và parse JSON từ text trả về
+        json_text = response.text.strip().replace("```json", "").replace("```", "")
+        return json.loads(json_text)
+
+    except Exception as e:
+        logging.error(f"Lỗi khi phân tích có cấu trúc: {e}")
+        # Nếu có lỗi, mặc định là câu hỏi pháp luật và không sửa chính tả
+        return {
+            "corrected_query": query,
+            "intent": "Legal Question",
+            "is_rag_required": True
+        }
+
 def rewrite_query_with_history(chat_history: list[ChatMessage]) -> str:
     if len(chat_history) < 2:
         return chat_history[-1].content
@@ -79,8 +140,49 @@ def stream_response_generator(request: QueryRequest, retriever: RetrievalSystem)
     try:
         # --- BƯỚC 1: LƯU TIN NHẮN CỦA NGƯỜI DÙNG NGAY LẬP TỨC ---
         user_message_content = request.chat_history[-1].content
-        add_message(conn, request.conversation_id, "user", user_message_content)
+        # === LỚP 1: BỘ LỌC NHANH ===
+        fast_intent = pre_filter_intent(user_message_content)
+        if fast_intent:
+            logging.info(f"Phát hiện ý định nhanh: {fast_intent}")
+            intent_responses = {
+                "Greeting": "Chào bạn. Tôi là trợ lý pháp lý ảo. Bạn cần tôi giúp gì về pháp luật Việt Nam?",
+                "Farewell": "Tạm biệt bạn. Nếu cần hỗ trợ, hãy liên hệ lại nhé!",
+                "Help Request": "Tôi có thể trả lời các câu hỏi liên quan đến dữ liệu pháp luật được cung cấp. Bạn hãy đặt một câu hỏi cụ thể về một vấn đề pháp lý nhé."
+            }
+            response_text = intent_responses.get(fast_intent)
+            add_message(conn, request.conversation_id, "user", user_message_content)
+            add_message(conn, request.conversation_id, "assistant", response_text)
+            yield f"data: {json.dumps({'text': response_text})}\n\n"
+            return
 
+        # === LỚP 2: LỆNH GỌI LLM THÔNG MINH ===
+        analysis = get_structured_input_analysis(user_message_content)
+        corrected_query = analysis['corrected_query']
+        is_rag_required = analysis['is_rag_required']
+
+        # Cập nhật chat history với câu đã sửa
+        request.chat_history[-1].content = corrected_query
+        if corrected_query != user_message_content:
+            logging.info(f"Sửa chính tả: '{user_message_content}' -> '{corrected_query}'")
+        
+        add_message(conn, request.conversation_id, "user", corrected_query)
+
+        # === ĐỊNH TUYẾN DỰA TRÊN KẾT QUẢ PHÂN TÍCH ===
+        if not is_rag_required:
+            # Xử lý các trường hợp small-talk khác mà bộ lọc nhanh bỏ lỡ
+            intent = analysis['intent']
+            response_text = "Cảm ơn bạn đã chia sẻ." # Câu trả lời mặc định
+            if intent == "Greeting":
+                 response_text = "Chào bạn. Tôi có thể giúp gì cho bạn về pháp luật?"
+            elif intent == "Farewell":
+                 response_text = "Tạm biệt!"
+            elif intent == "Help Request":
+                 response_text = "Hãy đặt câu hỏi về pháp luật và tôi sẽ cố gắng trả lời dựa trên dữ liệu của mình."
+
+            add_message(conn, request.conversation_id, "assistant", response_text)
+            yield f"data: {json.dumps({'text': response_text})}\n\n"
+            return
+        
         # --- BƯỚC 2: BIẾN ĐỔI CÂU HỎI VÀ RETRIEVAL (như cũ) ---
         standalone_question = rewrite_query_with_history(request.chat_history)
         retrieved_chunks = retriever.retrieve_chunks(standalone_question, top_k_rerank=request.top_k_rerank)
