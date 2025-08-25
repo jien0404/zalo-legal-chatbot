@@ -11,7 +11,7 @@ def get_db():
     Dependency của FastAPI để quản lý kết nối DB.
     Mỗi request sẽ dùng chung kết nối này.
     """
-    conn = sqlite3.connect(DB_NAME, timeout=10) # Thêm timeout để phòng trường hợp lock
+    conn = sqlite3.connect(DB_NAME, timeout=10) 
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -24,10 +24,37 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
-# Hàm init_db giữ nguyên
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    # ... (code init_db của bạn giữ nguyên) ...
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            hashed_password TEXT NOT NULL
+        );
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS conversations (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        );
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            sources TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (conversation_id) REFERENCES conversations (id)
+        );
+    ''')
+    conn.commit()
     conn.close()
 
 
