@@ -2,6 +2,7 @@ import json
 import os
 import logging
 import google.generativeai as genai
+import openai
 
 from api.schemas import QueryRequest 
 from core.database import (
@@ -15,6 +16,12 @@ try:
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 except Exception as e:
     print(f"Lỗi cấu hình Gemini API: {e}")
+
+# try:
+#     client = openai.OpenAI()
+# except openai.OpenAIError as e:
+#     logging.error(f"Không thể khởi tạo OpenAI client: {e}")
+#     client = None
 
 # --- Helper Functions ---
 GREETING_KEYWORDS = ["chào", "hello", "hi", "xin chào"]
@@ -48,7 +55,6 @@ def get_structured_input_analysis(query: str, is_first_message: bool) -> dict:
         if is_first_message:
             title_instruction = """4. `conversation_title`: Dựa vào `corrected_query`, tạo một tiêu đề ngắn gọn (3-5 từ) cho cuộc trò chuyện. Nếu ý định không phải là "Legal Question", trả về null."""
 
-        # === PROMPT MỚI ĐÃ ĐƯỢC TỐI ƯU HÓA ===
         prompt = f"""Bạn là một bộ xử lý ngôn ngữ đầu vào thông minh cho một trợ lý chuyên về pháp luật Việt Nam. 
 Cơ sở dữ liệu của trợ lý này chứa các điều khoản, luật, và nghị định của Việt Nam.
 
@@ -76,6 +82,12 @@ Câu gốc: "{query}"
 """
         
         response = model.generate_content(prompt)
+        # response = client.chat.completions.create(
+        #     model="gpt-4o-mini", 
+        #     messages=[{"role": "user", "content": prompt}],
+        #     temperature=0,
+        #     response_format={"type": "json_object"} 
+        # )
         json_text = response.text.strip().replace("```json", "").replace("```", "")
         analysis = json.loads(json_text)
         

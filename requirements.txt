@@ -9,6 +9,7 @@ sentence-transformers==2.7.0
 rank_bm25==0.2.2
 pyvi==0.1.1
 google-generativeai
+openai
 python-dotenv==1.0.1
 pinecone-client==3.2.2
 pytrec-eval==0.5
@@ -24,3 +25,4 @@ numpy
 pandas
 tqdm
 PyYAML
+
